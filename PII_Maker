@@ -1,15 +1,16 @@
 import re
-from typing import List, Union
+from typing import List, Union, Sequence
 
 class PiiMasker:
     def __init__(self):
-        # 1) Structured PII regexes
+        # Regex patterns for structured PII
         self.patterns = {
             "EMAIL":          re.compile(r"\b[\w\.-]+?@[\w\.-]+\.\w{2,4}\b"),
-            "PHONE":          re.compile(r"\b(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{3}\)?[\s-]?)?\d{3}[\s-]?\d{4}\b"),
+            "PHONE":          re.compile(r"\b(?:\+?\d{1,3}[\s\-\(\)]*)?(?:\d{3}[\s\-)]*)?\d{3}[\s\-]?\d{4}\b"),
             "SSN":            re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
-            "CREDIT_CARD":    re.compile(r"\b(?:\d[ -]*?){13,16}\b"),
+            "CREDIT_CARD":    re.compile(r"\b(?:\d[ \-]*?){13,16}\b"),
             "BANK_ACCOUNT":   re.compile(r"\b\d{8,17}\b"),
+            "IBAN":           re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b"),
             "VIN":            re.compile(r"\b(?!.*[IOQ])[A-HJ-NPR-Z0-9]{17}\b"),
             "IP_ADDRESS":     re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
             "URL":            re.compile(r"\bhttps?://[^\s]+\b"),
@@ -17,31 +18,57 @@ class PiiMasker:
             "PASSPORT":       re.compile(r"\b[A-Z]\d{8}\b"),
             "DRIVER_LICENSE": re.compile(r"\b[A-Z]{1,2}\d{4,8}\b"),
         }
-        # 2) multi-word proper nouns (2+ Title-cased words)
-        self.entity_multi = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b")
-        # 3) single Title-cased word
+        # Multi-word proper nouns
+        self.entity_multi  = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b")
+        # Single Title-cased word
         self.entity_single = re.compile(r"\b([A-Z][a-z]+)\b")
 
-    def mask(self, data: Union[str, List[str]]) -> List[str]:
-        texts = [data] if isinstance(data, str) else data
-        out = []
-        for text in texts:
-            t = text
-            # Phase 1: structured PII
-            for label, pat in self.patterns.items():
-                t = pat.sub(f"[{label}]", t)
-            # Phase 2: mask multi-word entities everywhere
-            t = self.entity_multi.sub(r"[ENTITY]", t)
-            # Phase 3: mask single-word entities everywhere
-            t = self.entity_single.sub(r"[ENTITY]", t)
-            out.append(t)
-        return out
+    def _mask_one(self, text: str) -> str:
+        # Phase 1: structured PII
+        for label, pat in self.patterns.items():
+            text = pat.sub(f"[{label}]", text)
+        # Phase 2: multi-word entities
+        text = self.entity_multi.sub(r"[ENTITY]", text)
+        # Phase 3: single-word entities
+        text = self.entity_single.sub(r"[ENTITY]", text)
+        return text
 
-    sample = [
-        "John Doe went to New York City on 2025-05-22. His SSN is 123-45-6789.",
-        "Contact Alice at alice@example.com or +1-202-555-0173 in Bangalore. VIN: 1HGCM82633A004352."
-    ]
+    def mask(self, data: Union[str, Sequence[str]]) -> Union[str, List[str]]:
+        """
+        Mask PII in either:
+          - a single string (returns a single masked string), or
+          - any sequence (list/tuple) of strings (returns a list of masked strings).
+        """
+        # If it’s a single string, just mask and return one string
+        if isinstance(data, str):
+            return self._mask_one(data)
+
+        # Otherwise assume it’s a sequence of strings
+        masked_list = []
+        for item in data:
+            if not isinstance(item, str):
+                raise TypeError("All items in the sequence must be strings")
+            masked_list.append(self._mask_one(item))
+        return masked_list
+
+
+if __name__ == "__main__":
+    # Notice: sample can now be a tuple, list, or a bare string.
+    sample = (
+        "On 2025-05-23, John Doe (SSN: 123-45-6789) sent an email to "
+        "jane.smith@example.com and then called +1 (555) 123-4567 from his home at "
+        "742 Evergreen Terrace, Springfield. He logged into his online banking "
+        "(Account No. 9876543210123456; IBAN: GB82WEST12345698765432) to transfer funds, "
+        "entered his credit card number 4111 1111 1111 1111, and later uploaded a scanned copy "
+        "of his passport P12345678."
+        "HIS driver license no is DL1234567. That evening he browsed https://secure.example-bank.com from IP 203.0.113.42."
+    )
+
     masker = PiiMasker()
-    for orig, masked in zip(sample, masker.mask(sample)):
-        print("Original:", orig)
-        print("Masked:  ", masked)
+    # Works whether sample is a string, a tuple, or a list:
+    masked = masker.mask(sample)
+
+    print("Original:")
+    print(sample)
+    print("\nMasked:")
+    print(masked)
