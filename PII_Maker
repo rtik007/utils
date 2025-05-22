@@ -1,73 +1,47 @@
 import re
-import spacy
+from typing import List, Union
 
 class PiiMasker:
-    def __init__(self, nlp_model="en_core_web_sm"):
-        # Load spaCy model for NER
-        self.nlp = spacy.load(nlp_model)
-
-        # Precompile regex patterns for common PII
+    def __init__(self):
+        # 1) Structured PII regexes
         self.patterns = {
-            "EMAIL": re.compile(r"\b[\w\.-]+?@[\w\.-]+\.\w{2,4}\b"),
-            "PHONE": re.compile(r"\b(\+?\d{1,3}[\s-]?)?(\(?\d{3}\)?[\s-]?)?\d{3}[\s-]?\d{4}\b"),
-            "SSN": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
-            "CREDIT_CARD": re.compile(r"\b(?:\d[ -]*?){13,16}\b"),
-            "IP_ADDRESS": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
-            "URL": re.compile(r"\bhttps?://[^\s]+"),
-            "DATE": re.compile(r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})\b"),
-            # Additional sensitive IDs
-            "PASSPORT": re.compile(r"\b[A-Z]\d{8}\b"),
+            "EMAIL":          re.compile(r"\b[\w\.-]+?@[\w\.-]+\.\w{2,4}\b"),
+            "PHONE":          re.compile(r"\b(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{3}\)?[\s-]?)?\d{3}[\s-]?\d{4}\b"),
+            "SSN":            re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+            "CREDIT_CARD":    re.compile(r"\b(?:\d[ -]*?){13,16}\b"),
+            "BANK_ACCOUNT":   re.compile(r"\b\d{8,17}\b"),
+            "VIN":            re.compile(r"\b(?!.*[IOQ])[A-HJ-NPR-Z0-9]{17}\b"),
+            "IP_ADDRESS":     re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+            "URL":            re.compile(r"\bhttps?://[^\s]+\b"),
+            "DATE":           re.compile(r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})\b"),
+            "PASSPORT":       re.compile(r"\b[A-Z]\d{8}\b"),
             "DRIVER_LICENSE": re.compile(r"\b[A-Z]{1,2}\d{4,8}\b"),
         }
+        # 2) multi-word proper nouns (2+ Title-cased words)
+        self.entity_multi = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b")
+        # 3) single Title-cased word
+        self.entity_single = re.compile(r"\b([A-Z][a-z]+)\b")
 
-    def mask_with_regex(self, text: str) -> str:
-        """Mask PII via regex patterns."""
-        for label, pattern in self.patterns.items():
-            text = pattern.sub(f"[{label}]", text)
-        return text
-
-    def mask_with_ner(self, text: str) -> str:
-        """Mask entities detected by spaCy NER."""
-        doc = self.nlp(text)
-        masked = text
-        for ent in reversed(doc.ents):
-            if ent.label_ in {"PERSON", "GPE", "ORG", "LOC", "DATE", "TIME", "MONEY", "CARDINAL"}:
-                masked = masked[:ent.start_char] + f"[{ent.label_}]" + masked[ent.end_char:]
-        return masked
-
-    def mask(self, data):
-        """Run both regex and NER masking on a string or list of strings."""
-        if isinstance(data, str):
-            texts = [data]
-        elif isinstance(data, list):
-            texts = data
-        else:
-            raise ValueError("Input must be a string or list of strings.")
-
-        masked_results = []
+    def mask(self, data: Union[str, List[str]]) -> List[str]:
+        texts = [data] if isinstance(data, str) else data
+        out = []
         for text in texts:
-            masked = self.mask_with_regex(text)
-            masked = self.mask_with_ner(masked)
-            masked_results.append(masked)
-        return masked_results
+            t = text
+            # Phase 1: structured PII
+            for label, pat in self.patterns.items():
+                t = pat.sub(f"[{label}]", t)
+            # Phase 2: mask multi-word entities everywhere
+            t = self.entity_multi.sub(r"[ENTITY]", t)
+            # Phase 3: mask single-word entities everywhere
+            t = self.entity_single.sub(r"[ENTITY]", t)
+            out.append(t)
+        return out
 
-
-if __name__ == "__main__":
     sample = [
-        "John Doe's passport number is A12345678 and driver's license DL1234567. "
-        "Contact: john.doe@example.com, +1-202-555-0173. SSN: 123-45-6789. "
-        "IP: 203.0.113.42.",
-        "Alice Smith (alice.smith@example.com) called from +1-202-555-0173 on 2025-05-21. "
-        "Her SSN is 123-45-6789, credit card 4111 1111 1111 1111, IP 203.0.113.42. "
-        "She works at OpenAI in San Francisco."
+        "John Doe went to New York City on 2025-05-22. His SSN is 123-45-6789.",
+        "Contact Alice at alice@example.com or +1-202-555-0173 in Bangalore. VIN: 1HGCM82633A004352."
     ]
-
     masker = PiiMasker()
-    print("Original:")
-    for idx, text in enumerate(sample, 1):
-        print(f" {idx}: {text}")
-
-    masked_list = masker.mask(sample)
-    print("\nMasked:")
-    for idx, masked in enumerate(masked_list, 1):
-        print(f" {idx}: {masked}")
+    for orig, masked in zip(sample, masker.mask(sample)):
+        print("Original:", orig)
+        print("Masked:  ", masked)
